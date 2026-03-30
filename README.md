@@ -16,7 +16,7 @@ The integration works as follows:
 - **Every 24 hours:** OpenClaw sends a rolling digest (`latest-digest-24h.md`) to the Telegram group.
 - **Failure escalation:** If the pipeline fails twice in a row or output files are missing post-run, OpenClaw escalates to the operator.
 
-The cron schedule, alert thresholds, and delivery channel are configured in `AGENTS.md` at the workspace root (separate from this repo). This repo contains only the pipeline code and its config.
+The cron schedule, alert thresholds, and delivery channel are configured in `AGENTS.md` at the workspace root of your OpenClaw workspace (separate from this repo). This repo contains only the pipeline code and its config.
 
 ---
 
@@ -33,7 +33,7 @@ The cron schedule, alert thresholds, and delivery channel are configured in `AGE
 
 ```bash
 git clone <this-repo>
-cd eternax-intel
+cd news-intel
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -54,6 +54,9 @@ Edit `.env`:
 ```env
 NEWSAPI_KEY=your_newsapi_key_here
 ANTHROPIC_API_KEY=your_anthropic_key_here
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+TELEGRAM_CHAT_ID=your_telegram_chat_id_here
+YOUR_CONTEXT=your_context_here
 ```
 
 ### 2. Telegram delivery
