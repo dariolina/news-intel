@@ -1,0 +1,121 @@
+keywords:
+  quantum_hardware:
+    - quantum computing
+    - quantum computer
+    - quantum hardware
+    - Google quantum
+    - IBM quantum
+    - Microsoft quantum
+    - quantum security
+    - quantum resilience
+    - quantum privacy
+    - quantum authentication
+    - quantum key distribution
+    - quantum encryption
+    - quantum decryption
+    - quantum random number generation
+    - quantum error correction
+
+  pq_cryptography:
+    - post-quantum
+    - PQ cryptography
+    - NIST post-quantum
+    - lattice cryptography
+    - Dilithium
+    - Falcon
+    - SPHINCS
+    - IACR
+    - ePrint
+    - information-theoretic signature
+
+  pq_migration_blockchain:
+    - Ethereum post-quantum
+    - Solana post-quantum
+    - Bitcoin post-quantum
+    - quantum-resistant blockchain
+    - Zcash post-quantum
+    - Monero post-quantum
+    - Tempo post-quantum
+    - blockchain migration
+    - cryptographic migration
+
+  tokenization_stablecoin:
+    - stablecoin infrastructure
+    - tokenized RWA
+    - tokenized treasury
+    - tokenized securities
+    - DTCC tokenization
+    - Wells Fargo WFUSD
+    - BlackRock BUIDL
+    - Circle USDC quantum
+    - VanEck VBILL
+    - Franklin Templeton BENJI
+    - Ondo OUSG
+    - Securitize
+    - JP Morgan JPMD
+
+rss_feeds:
+  - https://blog.ethereum.org/en/feed.xml
+  - https://solana.com/news/rss.xml
+  - https://www.coindesk.com/arc/outboundfeeds/rss/
+  - https://www.theblock.co/rss.xml
+  - https://export.arxiv.org/rss/quant-ph
+  - https://export.arxiv.org/rss/cs.CR
+  - https://eprint.iacr.org/rss/rss.xml
+  - https://feeds.feedburner.com/TheHackersNews
+  - https://cointelegraph.com/rss/tag/blockchain
+  - https://www.nist.gov/news-events/news/rss.xml
+  - https://www.cisa.gov/cybersecurity-advisories/all.xml
+  - https://blog.cloudflare.com/rss/
+  - https://security.googleblog.com/atom.xml
+  - https://www.microsoft.com/en-us/security/blog/feed/
+  - https://www.bis.org/doclist/rss_all_categories.rss
+
+arxiv_categories:
+  - quant-ph
+  - cs.CR
+
+relevance_categories:
+  - quantum_hardware
+  - pq_cryptography
+  - pq_migration_blockchain
+  - tokenization_stablecoin
+  - regulatory
+  - competitor_activity
+
+score_thresholds:
+  minimum: 5
+  tweet_suggestion: 7
+  alert: 8
+
+# RSS (non-arXiv) and dedicated IACR ePrint fetch. Items older than this are dropped before scoring.
+# Default was 12h in code; use 48 if the job runs daily or can skip windows.
+feed_max_age_hours: 48
+
+newsapi:
+  key: "${NEWSAPI_KEY}"
+  page_size: 100
+  sort_by: publishedAt
+  language: en
+  # Free tier serves articles ~24h late; narrow `from` windows return empty.
+  from_lookback_hours: 48
+  # If omitted, matches from_lookback_hours (recommended with delay). Set lower to tighten by publishedAt.
+  max_article_age_hours: 36
+
+anthropic:
+  model: claude-haiku-4-5
+  max_tokens: 256
+
+telegram:
+  bot_token: "${TELEGRAM_BOT_TOKEN}"
+  chat_id: "${TELEGRAM_CHAT_ID}"
+
+data_paths:
+  seen: data/seen.json
+  digests: data/digests
+  tweets: data/tweets
+  alerts: data/alerts
+  latest_digest: data/latest-digest.md
+  latest_digest_24h: data/latest-digest-24h.md
+  latest_tweets: data/latest-tweets.md
+  latest_alerts: data/latest-alerts.md
