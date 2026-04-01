@@ -1,5 +1,5 @@
 """
-Scores items for relevance using Claude claude-haiku-4-5.
+Scores items for relevance using Claude via the Message Batches API (50% cost reduction).
 Returns JSON: {score, category, reason, tweet_angle}
 Items below score threshold are discarded.
 """
@@ -11,6 +11,8 @@ import time
 from typing import Any
 
 import anthropic
+from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
+from anthropic.types.messages.batch_create_params import Request
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +58,7 @@ Scoring rubric (0–10):
 If the title or snippet clearly concerns post-quantum cryptography, quantum-resistant schemes, or PQ/blockchain migration (including IACR ePrints and arXiv cs.CR), score at least 6 unless it is clearly unrelated spam.
 
 Return ONLY valid JSON, no markdown, no prose:
-{"score": <int 0-10>, "category": "<one of the 6 categories>", "reason": "<one sentence>", \
-"tweet_angle": "<one sentence hook for Twitter if score >= 6, else null>"}
+{{"score": <int 0-10>, "category": "<one of the 6 categories>", "reason": "<one sentence>", "tweet_angle": "<one sentence hook for Twitter if score >= 6, else null>"}}
 """
 
 
@@ -70,7 +71,6 @@ def _build_user_message(item: dict[str, Any]) -> str:
 
 def _parse_score_response(text: str) -> dict[str, Any] | None:
     text = text.strip()
-    # Strip accidental markdown fences
     if text.startswith("```"):
         lines = text.splitlines()
         text = "\n".join(
@@ -104,84 +104,107 @@ def score_items(
     api_key: str,
     model: str = "claude-haiku-4-5",
     min_score: int = 4,
+    poll_interval: int = 30,
 ) -> list[dict[str, Any]]:
     """
-    Score each item with Claude. Returns enriched items above min_score,
-    sorted by score descending.
+    Score all items via the Anthropic Message Batches API (50% cheaper, async).
+    Submits a single batch, polls until complete, then parses results.
+    Returns enriched items above min_score, sorted by score descending.
     """
     if not items:
         return []
 
     client = anthropic.Anthropic(api_key=api_key)
+
+    item_map: dict[str, dict[str, Any]] = {}
+    requests: list[Request] = []
+    for i, item in enumerate(items):
+        custom_id = f"item-{i}"
+        item_map[custom_id] = item
+        requests.append(
+            Request(
+                custom_id=custom_id,
+                params=MessageCreateParamsNonStreaming(
+                    model=model,
+                    max_tokens=256,
+                    system=SYSTEM_PROMPT,
+                    messages=[
+                        {"role": "user", "content": _build_user_message(item)},
+                    ],
+                ),
+            )
+        )
+
+    logger.info("Submitting batch of %d items to Anthropic...", len(requests))
+    batch = client.messages.batches.create(requests=requests)
+    batch_id = batch.id
+    logger.info("Batch created: %s", batch_id)
+
+    while True:
+        batch = client.messages.batches.retrieve(batch_id)
+        counts = batch.request_counts
+        logger.info(
+            "Batch %s — processing=%d succeeded=%d errored=%d expired=%d canceled=%d",
+            batch_id,
+            counts.processing,
+            counts.succeeded,
+            counts.errored,
+            counts.expired,
+            counts.canceled,
+        )
+        if batch.processing_status == "ended":
+            break
+        time.sleep(poll_interval)
+
     scored: list[dict[str, Any]] = []
-    processed_count = 0
     kept_count = 0
     parse_fail_count = 0
-    api_error_count = 0
-    rate_limit_count = 0
+    error_count = 0
+    expired_count = 0
 
-    for i, item in enumerate(items):
-        try:
-            message = client.messages.create(
-                model=model,
-                max_tokens=256,
-                system=SYSTEM_PROMPT,
-                messages=[
-                    {"role": "user", "content": _build_user_message(item)},
-                ],
-            )
+    for result in client.messages.batches.results(batch_id):
+        item = item_map.get(result.custom_id)
+        if item is None:
+            logger.warning("Unknown custom_id in batch result: %s", result.custom_id)
+            continue
+
+        if result.result.type == "succeeded":
+            message = result.result.message
             raw = message.content[0].text if message.content else ""
-            result = _parse_score_response(raw)
+            parsed = _parse_score_response(raw)
 
-            if result is None:
-                logger.warning("Skipping item %s: unparseable score response.", item.get("id"))
+            if parsed is None:
                 parse_fail_count += 1
+                logger.warning(
+                    "Skipping item %s: unparseable score response.",
+                    item.get("id"),
+                )
                 continue
 
-            if result["score"] < min_score:
+            if parsed["score"] < min_score:
                 logger.debug(
                     "Discarded (score %d < %d): %s",
-                    result["score"],
+                    parsed["score"],
                     min_score,
                     item.get("title", "")[:60],
                 )
                 continue
 
-            enriched = {**item, **result}
-            scored.append(enriched)
+            scored.append({**item, **parsed})
             kept_count += 1
-            logger.debug(
-                "[%d/%d] score=%d cat=%s: %s",
-                i + 1,
-                len(items),
-                result["score"],
-                result["category"],
-                item.get("title", "")[:60],
+
+        elif result.result.type == "errored":
+            error_count += 1
+            logger.error(
+                "Batch error on item %s: %s",
+                item.get("id"),
+                result.result.error,
             )
-
-        except anthropic.APIError as exc:
-            api_error_count += 1
-            if getattr(exc, "status_code", None) == 429:
-                rate_limit_count += 1
-            logger.error("Anthropic API error on item %s: %s", item.get("id"), exc)
-        except Exception as exc:
-            logger.error("Unexpected error scoring item %s: %s", item.get("id"), exc)
-            api_error_count += 1
-        finally:
-            processed_count += 1
-            if processed_count == len(items) or processed_count % 10 == 0:
-                logger.info(
-                    "Scoring progress: %d/%d processed, %d kept, %d parse-failed, %d API errors (%d rate-limited)",
-                    processed_count,
-                    len(items),
-                    kept_count,
-                    parse_fail_count,
-                    api_error_count,
-                    rate_limit_count,
-                )
-
-        # Avoid hammering the API
-        time.sleep(0.1)
+        elif result.result.type == "expired":
+            expired_count += 1
+            logger.warning("Request expired for item %s", item.get("id"))
+        elif result.result.type == "canceled":
+            logger.warning("Request canceled for item %s", item.get("id"))
 
     scored.sort(key=lambda x: x["score"], reverse=True)
     logger.info(
@@ -191,11 +214,10 @@ def score_items(
         min_score,
     )
     logger.info(
-        "Scoring counters: processed=%d kept=%d parse_failed=%d api_errors=%d rate_limited=%d",
-        processed_count,
+        "Batch counters: kept=%d parse_failed=%d errored=%d expired=%d",
         kept_count,
         parse_fail_count,
-        api_error_count,
-        rate_limit_count,
+        error_count,
+        expired_count,
     )
     return scored

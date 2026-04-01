@@ -105,6 +105,7 @@ newsapi:
 anthropic:
   model: claude-haiku-4-5
   max_tokens: 256
+  batch_poll_interval: 30
 
 telegram:
   bot_token: "${TELEGRAM_BOT_TOKEN}"
