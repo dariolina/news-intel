@@ -139,7 +139,14 @@ def main() -> None:
     # ------------------------------------------------------------------
     logger.info("=== Deduplicating ===")
     seen = load_seen(seen_path)
-    new_items = filter_new(all_items, seen)
+    dedup_cfg = config.get("dedup", {})
+    new_items = filter_new(
+        all_items,
+        seen,
+        title_jaccard=dedup_cfg.get("title_jaccard", 0.6),
+        content_jaccard=dedup_cfg.get("content_jaccard", 0.35),
+        content_overlap=dedup_cfg.get("content_overlap", 0.6),
+    )
     logger.info("New items after dedup: %d", len(new_items))
 
     # ------------------------------------------------------------------

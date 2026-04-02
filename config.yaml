@@ -83,6 +83,11 @@ relevance_categories:
   - regulatory
   - competitor_activity
 
+dedup:
+  title_jaccard: 0.6
+  content_jaccard: 0.35
+  content_overlap: 0.6
+
 score_thresholds:
   minimum: 5
   tweet_suggestion: 7
