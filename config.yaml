@@ -89,8 +89,8 @@ dedup:
   content_overlap: 0.6
 
 score_thresholds:
-  minimum: 5
-  tweet_suggestion: 7
+  minimum: 6
+  tweet_suggestion: 8
   alert: 8
 
 # RSS (non-arXiv) and dedicated IACR ePrint fetch. Items older than this are dropped before scoring.
