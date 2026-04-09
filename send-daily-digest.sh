@@ -42,11 +42,18 @@ while [[ $OFFSET -lt $TOTAL ]]; do
   CHUNK="${CONTENT:$OFFSET:$MAX}"
   OFFSET=$((OFFSET + MAX))
 
-  curl -s -X POST "$TG_URL" \
+  RESPONSE="$(curl -s -X POST "$TG_URL" \
     -H "Content-Type: application/json" \
     -d "$(jq -n --arg chat "$TELEGRAM_CHAT_ID" --arg text "$CHUNK" \
-      '{chat_id: $chat, text: $text, parse_mode: "Markdown"}')" \
-    | jq -e '.ok' > /dev/null || { echo "ERROR: Telegram API call failed." >&2; exit 1; }
+      '{chat_id: $chat, text: $text}')")"
+
+  if ! jq -e '.ok == true' > /dev/null <<< "$RESPONSE"; then
+    ERR_CODE="$(jq -r '.error_code // "unknown"' <<< "$RESPONSE")"
+    ERR_DESC="$(jq -r '.description // "No description from Telegram API"' <<< "$RESPONSE")"
+    echo "ERROR: Telegram API call failed (code: $ERR_CODE, description: $ERR_DESC)." >&2
+    echo "DEBUG: Telegram raw response: $RESPONSE" >&2
+    exit 1
+  fi
 done
 
 echo "Digest sent successfully ($TOTAL chars)."
