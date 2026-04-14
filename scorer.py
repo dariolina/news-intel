@@ -62,6 +62,41 @@ Return ONLY valid JSON, no markdown, no prose:
 """
 
 
+def _retrieve_batch_with_retry(
+    client: anthropic.Anthropic,
+    batch_id: str,
+    *,
+    max_retries: int = 5,
+    initial_backoff_seconds: int = 2,
+) -> Any:
+    """
+    Retrieve a message batch with retry/backoff on transient transport/server failures.
+    """
+    attempt = 0
+    while True:
+        try:
+            return client.messages.batches.retrieve(batch_id)
+        except (
+            anthropic.APIConnectionError,
+            anthropic.APITimeoutError,
+            anthropic.InternalServerError,
+        ) as exc:
+            attempt += 1
+            if attempt > max_retries:
+                raise
+            sleep_for = initial_backoff_seconds * (2 ** (attempt - 1))
+            logger.warning(
+                "Transient Anthropic error while polling batch %s (%s). "
+                "Retrying in %ds (%d/%d).",
+                batch_id,
+                exc.__class__.__name__,
+                sleep_for,
+                attempt,
+                max_retries,
+            )
+            time.sleep(sleep_for)
+
+
 def _build_user_message(item: dict[str, Any]) -> str:
     title = item.get("title", "").strip()
     snippet = item.get("snippet", "").strip()
@@ -141,7 +176,7 @@ def score_items(
     logger.info("Batch created: %s", batch_id)
 
     while True:
-        batch = client.messages.batches.retrieve(batch_id)
+        batch = _retrieve_batch_with_retry(client, batch_id)
         counts = batch.request_counts
         logger.info(
             "Batch %s — processing=%d succeeded=%d errored=%d expired=%d canceled=%d",
