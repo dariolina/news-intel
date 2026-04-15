@@ -152,16 +152,13 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 3. Score
     # ------------------------------------------------------------------
-    batch_poll_interval = int(anthropic_cfg.get("batch_poll_interval", 30))
-
-    logger.info("=== Scoring with Claude (%s) via Batch API ===", model)
+    logger.info("=== Scoring with Claude (%s) via Messages API ===", model)
     if new_items:
         scored = score_items(
             new_items,
             anthropic_key,
             model=model,
             min_score=min_score,
-            poll_interval=batch_poll_interval,
         )
     else:
         scored = []
