@@ -1,5 +1,5 @@
 """
-Scores items for relevance using OpenAI chat completions.
+Scores items for relevance using the OpenAI Responses API.
 Returns JSON: {score, category, reason, tweet_angle}
 Items below score threshold are discarded.
 """
@@ -56,8 +56,31 @@ Scoring rubric (0–10):
 If the title or snippet clearly concerns post-quantum cryptography, quantum-resistant schemes, or PQ/blockchain migration (including IACR ePrints and arXiv cs.CR), score at least 6 unless it is clearly unrelated spam.
 
 Return ONLY valid JSON, no markdown, no prose:
-{{"score": <int 0-10>, "category": "<one of the 6 categories>", "reason": "<one sentence>", "tweet_angle": "<one sentence hook for Twitter if score >= 6, else null>"}}
+{{"score": <int 0-10>, "category": "<one of the 6 categories>", "reason": "<one sentence>", "tweet_angle": "<one sentence hook for Twitter if score >= 7, else null>"}}
+
+Keep "reason" and "tweet_angle" short (plain text, no line breaks) so the response stays compact.
 """
+
+
+SCORE_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "score": {"type": "integer", "minimum": 0, "maximum": 10},
+        "category": {
+            "type": "string",
+            "enum": sorted(VALID_CATEGORIES),
+        },
+        "reason": {"type": "string", "maxLength": 500},
+        "tweet_angle": {
+            "anyOf": [
+                {"type": "string", "maxLength": 280},
+                {"type": "null"},
+            ],
+        },
+    },
+    "required": ["score", "category", "reason", "tweet_angle"],
+    "additionalProperties": False,
+}
 
 
 def _create_message_with_retry(
@@ -65,25 +88,27 @@ def _create_message_with_retry(
     *,
     model: str,
     user_message: str,
+    max_output_tokens: int,
+    reasoning_effort: str | None,
+    structured_output: bool,
     max_retries: int = 5,
     initial_backoff_seconds: int = 2,
 ) -> Any:
     """
-    Create a completion with retry/backoff on transient transport/server failures.
+    Create a response with retry/backoff on transient transport/server failures.
     """
     import time
 
     attempt = 0
     while True:
         try:
-            return client.chat.completions.create(
+            return _responses_create_for_score(
+                client,
                 model=model,
-                max_tokens=256,
-                response_format={"type": "json_object"},
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message},
-                ],
+                user_message=user_message,
+                max_output_tokens=max_output_tokens,
+                reasoning_effort=reasoning_effort,
+                structured_output=structured_output,
             )
         except (
             openai.APIConnectionError,
@@ -103,6 +128,108 @@ def _create_message_with_retry(
                 max_retries,
             )
             time.sleep(sleep_for)
+
+
+def _responses_create_for_score(
+    client: OpenAI,
+    *,
+    model: str,
+    user_message: str,
+    max_output_tokens: int,
+    reasoning_effort: str | None,
+    structured_output: bool,
+) -> Any:
+    """
+    Responses API call with structured JSON when supported.
+    Falls back if the API rejects optional parameters for this model.
+    """
+    text: dict[str, Any] = {"verbosity": "low"}
+    if structured_output:
+        text["format"] = {
+            "type": "json_schema",
+            "name": "news_intel_score",
+            "strict": True,
+            "schema": SCORE_JSON_SCHEMA,
+        }
+
+    kwargs: dict[str, Any] = {
+        "model": model,
+        "instructions": SYSTEM_PROMPT,
+        "input": user_message,
+        "max_output_tokens": max_output_tokens,
+        "text": text,
+    }
+    if reasoning_effort:
+        kwargs["reasoning"] = {"effort": reasoning_effort}
+
+    try:
+        return client.responses.create(**kwargs)
+    except openai.BadRequestError:
+        if structured_output and reasoning_effort:
+            logger.info(
+                "Retrying score request without reasoning_effort=%r (model may not support it)",
+                reasoning_effort,
+            )
+            return _responses_create_for_score(
+                client,
+                model=model,
+                user_message=user_message,
+                max_output_tokens=max_output_tokens,
+                reasoning_effort=None,
+                structured_output=True,
+            )
+        if structured_output:
+            logger.info(
+                "Retrying score request without structured JSON (model may not support json_schema)"
+            )
+            return _responses_create_for_score(
+                client,
+                model=model,
+                user_message=user_message,
+                max_output_tokens=max_output_tokens,
+                reasoning_effort=None,
+                structured_output=False,
+            )
+        raise
+
+
+def _should_retry_score_response(response: Any, raw: str, parsed: dict[str, Any] | None) -> bool:
+    if parsed is not None:
+        return False
+    if raw.strip():
+        return True
+    incomplete = getattr(response, "incomplete_details", None)
+    reason = getattr(incomplete, "reason", None) if incomplete is not None else None
+    if reason == "max_output_tokens":
+        return True
+    return False
+
+
+def _extract_response_text(response: Any) -> str:
+    """
+    Extract model text robustly from Responses API payloads.
+    """
+    output_text = getattr(response, "output_text", None)
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text.strip()
+
+    output = getattr(response, "output", None) or []
+    parts: list[str] = []
+
+    for item in output:
+        item_type = getattr(item, "type", None)
+        if item_type != "message":
+            continue
+
+        content = getattr(item, "content", None) or []
+        for block in content:
+            block_type = getattr(block, "type", None)
+            if block_type == "output_text":
+                text = getattr(block, "text", None)
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+
+    return "\n".join(parts).strip()
 
 
 def _build_user_message(item: dict[str, Any]) -> str:
@@ -147,9 +274,13 @@ def score_items(
     api_key: str,
     model: str = "gpt-4.1-mini",
     min_score: int = 4,
+    *,
+    max_output_tokens: int = 4096,
+    reasoning_effort: str | None = "low",
+    structured_output: bool = True,
 ) -> list[dict[str, Any]]:
     """
-    Score all items via OpenAI chat completions.
+    Score all items via the OpenAI Responses API.
     Sends one request per item and parses results.
     Returns enriched items above min_score, sorted by score descending.
     """
@@ -166,26 +297,71 @@ def score_items(
 
     for idx, item in enumerate(items, start=1):
         logger.info("Scoring item %d/%d", idx, total_items)
-        try:
-            message = _create_message_with_retry(
-                client,
-                model=model,
-                user_message=_build_user_message(item),
-            )
-        except openai.APIError as exc:
-            error_count += 1
-            logger.error(
-                "OpenAI error on item %s: %s",
-                item.get("id"),
-                exc,
-            )
+        doubled = min(16384, max(1, max_output_tokens) * 2)
+        token_budgets = (
+            [max_output_tokens, doubled]
+            if doubled > max_output_tokens
+            else [max_output_tokens]
+        )
+        message: Any = None
+        raw = ""
+        parsed: dict[str, Any] | None = None
+
+        for attempt_idx, token_budget in enumerate(token_budgets):
+            if attempt_idx > 0:
+                logger.warning(
+                    "Re-scoring item %s with max_output_tokens=%d (parse failed or empty output)",
+                    item.get("id"),
+                    token_budget,
+                )
+            try:
+                message = _create_message_with_retry(
+                    client,
+                    model=model,
+                    user_message=_build_user_message(item),
+                    max_output_tokens=token_budget,
+                    reasoning_effort=reasoning_effort,
+                    structured_output=structured_output,
+                )
+            except openai.APIError as exc:
+                error_count += 1
+                logger.error(
+                    "OpenAI error on item %s: %s",
+                    item.get("id"),
+                    exc,
+                )
+                message = None
+                break
+
+            if message is None:
+                break
+
+            raw = _extract_response_text(message)
+            parsed = _parse_score_response(raw)
+            if parsed is not None:
+                break
+            if not _should_retry_score_response(message, raw, parsed):
+                break
+
+        if message is None:
             continue
 
-        content = message.choices[0].message.content if message.choices else ""
-        raw = content if isinstance(content, str) else ""
-        parsed = _parse_score_response(raw)
         if parsed is None:
             parse_fail_count += 1
+            if not raw.strip():
+                logger.warning(
+                    "Empty model output for item %s: status=%s incomplete=%s usage=%s",
+                    item.get("id"),
+                    getattr(message, "status", None),
+                    getattr(message, "incomplete_details", None),
+                    getattr(message, "usage", None),
+                )
+            else:
+                logger.warning(
+                    "Unparseable JSON for item %s (first 240 chars): %r",
+                    item.get("id"),
+                    raw[:240],
+                )
             logger.warning(
                 "Skipping item %s: unparseable score response.",
                 item.get("id"),

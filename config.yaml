@@ -109,7 +109,11 @@ newsapi:
 
 openai:
   model: "${OPENAI_MODEL}"
-  max_tokens: 256
+  # Responses API: reasoning + visible output share this budget (reasoning can use 1024+ alone).
+  max_output_tokens: 4096
+  # Cuts internal reasoning token use on supported models; omit or set null to disable.
+  reasoning_effort: low
+  structured_output: true
 
 telegram:
   bot_token: "${TELEGRAM_BOT_TOKEN}"

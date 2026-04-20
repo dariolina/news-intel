@@ -99,6 +99,15 @@ def main() -> None:
 
     openai_cfg = config.get("openai", {})
     model = os.getenv("OPENAI_MODEL") or openai_cfg.get("model", "gpt-4.1-mini")
+    max_output_tokens = int(
+        openai_cfg.get("max_output_tokens") or openai_cfg.get("max_tokens") or 4096
+    )
+    reasoning_effort_raw = openai_cfg.get("reasoning_effort", "low")
+    if reasoning_effort_raw in (None, ""):
+        reasoning_effort: str | None = None
+    else:
+        reasoning_effort = str(reasoning_effort_raw).strip() or None
+    structured_output = bool(openai_cfg.get("structured_output", True))
 
     keywords = config.get("keywords", {})
     rss_feeds = config.get("rss_feeds", [])
@@ -152,13 +161,16 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 3. Score
     # ------------------------------------------------------------------
-    logger.info("=== Scoring with OpenAI (%s) via chat completions ===", model)
+    logger.info("=== Scoring with OpenAI (%s) via Responses API ===", model)
     if new_items:
         scored = score_items(
             new_items,
             openai_key,
             model=model,
             min_score=min_score,
+            max_output_tokens=max_output_tokens,
+            reasoning_effort=reasoning_effort,
+            structured_output=structured_output,
         )
     else:
         scored = []
