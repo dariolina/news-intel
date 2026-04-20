@@ -74,10 +74,10 @@ def main() -> None:
     load_dotenv()
 
     newsapi_key = os.getenv("NEWSAPI_KEY", "")
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
+    openai_key = os.getenv("OPENAI_API_KEY", "")
 
-    if not anthropic_key or anthropic_key == "your_key_here":
-        logger.error("ANTHROPIC_API_KEY not set. Set it in .env and re-run.")
+    if not openai_key or openai_key == "your_key_here":
+        logger.error("OPENAI_API_KEY not set. Set it in .env and re-run.")
         sys.exit(1)
 
     config = load_config()
@@ -97,8 +97,8 @@ def main() -> None:
     min_score = thresholds.get("minimum", 5)
     feed_max_age_hours = int(config.get("feed_max_age_hours", 12))
 
-    anthropic_cfg = config.get("anthropic", {})
-    model = anthropic_cfg.get("model", "claude-haiku-4-5")
+    openai_cfg = config.get("openai", {})
+    model = os.getenv("OPENAI_MODEL") or openai_cfg.get("model", "gpt-4.1-mini")
 
     keywords = config.get("keywords", {})
     rss_feeds = config.get("rss_feeds", [])
@@ -152,11 +152,11 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 3. Score
     # ------------------------------------------------------------------
-    logger.info("=== Scoring with Claude (%s) via Messages API ===", model)
+    logger.info("=== Scoring with OpenAI (%s) via chat completions ===", model)
     if new_items:
         scored = score_items(
             new_items,
-            anthropic_key,
+            openai_key,
             model=model,
             min_score=min_score,
         )

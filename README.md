@@ -24,7 +24,7 @@ The cron schedule, alert thresholds, and delivery channel are configured in `AGE
 
 - Python 3.10+
 - A [NewsAPI](https://newsapi.org) key (free tier works, but news may be delayed by 24 hours)
-- An [Anthropic](https://console.anthropic.com) API key (used for scoring relevance)
+- An [OpenAI](https://platform.openai.com) API key (used for scoring relevance)
 - OpenClaw installed and configured with a Telegram bot (for automated delivery)
 
 ---
@@ -53,7 +53,8 @@ Edit `.env`:
 
 ```env
 NEWSAPI_KEY=your_newsapi_key_here
-ANTHROPIC_API_KEY=your_anthropic_key_here
+OPENAI_API_KEY=your_openai_key_here
+OPENAI_MODEL=gpt-4.1-mini
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
 TELEGRAM_CHAT_ID=your_telegram_chat_id_here
 YOUR_CONTEXT=your_context_here
@@ -96,7 +97,7 @@ python run.py
 The pipeline:
 1. Fetches all sources (NewsAPI, RSS, arXiv, IACR ePrint)
 2. Deduplicates against `data/seen.json` (items are never re-scored once seen)
-3. Scores each new item with Claude Haiku (0–10 relevance score)
+3. Scores each new item with OpenAI (0–10 relevance score)
 4. Discards items below `score_thresholds.minimum`
 5. Writes dated archives and `latest-*` output files
 

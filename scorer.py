@@ -1,5 +1,5 @@
 """
-Scores items for relevance using Claude via the standard Messages API.
+Scores items for relevance using OpenAI chat completions.
 Returns JSON: {score, category, reason, tweet_angle}
 Items below score threshold are discarded.
 """
@@ -9,7 +9,8 @@ import logging
 import os
 from typing import Any
 
-import anthropic
+import openai
+from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,7 @@ Return ONLY valid JSON, no markdown, no prose:
 
 
 def _create_message_with_retry(
-    client: anthropic.Anthropic,
+    client: OpenAI,
     *,
     model: str,
     user_message: str,
@@ -68,32 +69,33 @@ def _create_message_with_retry(
     initial_backoff_seconds: int = 2,
 ) -> Any:
     """
-    Create a message with retry/backoff on transient transport/server failures.
+    Create a completion with retry/backoff on transient transport/server failures.
     """
     import time
 
     attempt = 0
     while True:
         try:
-            return client.messages.create(
+            return client.chat.completions.create(
                 model=model,
                 max_tokens=256,
-                system=SYSTEM_PROMPT,
+                response_format={"type": "json_object"},
                 messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_message},
                 ],
             )
         except (
-            anthropic.APIConnectionError,
-            anthropic.APITimeoutError,
-            anthropic.InternalServerError,
+            openai.APIConnectionError,
+            openai.APITimeoutError,
+            openai.InternalServerError,
         ) as exc:
             attempt += 1
             if attempt > max_retries:
                 raise
             sleep_for = initial_backoff_seconds * (2 ** (attempt - 1))
             logger.warning(
-                "Transient Anthropic error while scoring item (%s). "
+                "Transient OpenAI error while scoring item (%s). "
                 "Retrying in %ds (%d/%d).",
                 exc.__class__.__name__,
                 sleep_for,
@@ -143,18 +145,18 @@ def _parse_score_response(text: str) -> dict[str, Any] | None:
 def score_items(
     items: list[dict[str, Any]],
     api_key: str,
-    model: str = "claude-haiku-4-5",
+    model: str = "gpt-4.1-mini",
     min_score: int = 4,
 ) -> list[dict[str, Any]]:
     """
-    Score all items via the Anthropic Messages API.
+    Score all items via OpenAI chat completions.
     Sends one request per item and parses results.
     Returns enriched items above min_score, sorted by score descending.
     """
     if not items:
         return []
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = OpenAI(api_key=api_key)
 
     scored: list[dict[str, Any]] = []
     kept_count = 0
@@ -170,16 +172,17 @@ def score_items(
                 model=model,
                 user_message=_build_user_message(item),
             )
-        except anthropic.APIError as exc:
+        except openai.APIError as exc:
             error_count += 1
             logger.error(
-                "Anthropic error on item %s: %s",
+                "OpenAI error on item %s: %s",
                 item.get("id"),
                 exc,
             )
             continue
 
-        raw = message.content[0].text if message.content else ""
+        content = message.choices[0].message.content if message.choices else ""
+        raw = content if isinstance(content, str) else ""
         parsed = _parse_score_response(raw)
         if parsed is None:
             parse_fail_count += 1

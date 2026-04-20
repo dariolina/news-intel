@@ -107,8 +107,8 @@ newsapi:
   # If omitted, matches from_lookback_hours (recommended with delay). Set lower to tighten by publishedAt.
   max_article_age_hours: 36
 
-anthropic:
-  model: claude-haiku-4-5
+openai:
+  model: "${OPENAI_MODEL}"
   max_tokens: 256
 
 telegram:
