@@ -1,0 +1,11 @@
+# News Intel — install with: crontab -e
+# Adjust /path/to/news-intel and log paths.
+
+SHELL=/bin/bash
+PATH=/usr/local/bin:/usr/bin:/bin
+
+# Every 8 hours at 06:00, 14:00, 22:00 (local server time): fetch, score, Telegram if alerts
+0 6,14,22 * * * cd /path/to/news-intel && . venv/bin/activate && python run.py >> /path/to/news-intel/data/run.log 2>&1
+
+# Daily rolling digest (optional; uses send-daily-digest.sh)
+0 7 * * * cd /path/to/news-intel && ./send-daily-digest.sh >> /path/to/news-intel/data/digest-send.log 2>&1

@@ -6,17 +6,12 @@ Sources: NewsAPI, RSS feeds (CoinDesk, The Block, Ethereum Blog, Solana, arXiv, 
 
 ---
 
-## How It Fits Into the OpenClaw Workflow
+## Scheduling and delivery
 
-This pipeline is designed to run as a scheduled job managed by [OpenClaw](https://openclaw.ai) — a personal AI gateway. The OpenClaw agent monitors the pipeline on a 6-hour cadence, verifies outputs, and delivers formatted digests and alerts to a Telegram group.
+- **Pipeline (`run.py`):** Fetches sources, scores new items, writes `data/latest-*.md`. If any item meets the alert threshold (`score_thresholds.alert` in `config.yaml`, default behavior is score ≥ 8), the same content as `data/latest-alerts.md` is sent to Telegram (plain text, split automatically if longer than Telegram’s message limit).
+- **Daily digest :** `send-daily-digest.sh` sends `data/latest-digest-24h.md` to Telegram. Run it from cron separately if you want a daily summary in addition to alert pushes.
 
-The integration works as follows:
-
-- **Every 6 hours:** OpenClaw triggers `python run.py`, verifies the output files exist and are current, and checks `latest-alerts.md` for high-priority items (score ≥ 8). If alerts are present, they are sent immediately to the configured Telegram group.
-- **Every 24 hours:** OpenClaw sends a rolling digest (`latest-digest-24h.md`) to the Telegram group.
-- **Failure escalation:** If the pipeline fails twice in a row or output files are missing post-run, OpenClaw escalates to the operator.
-
-The cron schedule, alert thresholds, and delivery channel are configured in `AGENTS.md` at the workspace root of your OpenClaw workspace (separate from this repo). This repo contains only the pipeline code and its config.
+See `crontab.example` for sample `crontab` lines. Copy it, replace `/path/to/news-intel`, then merge the lines into your user crontab with `crontab -e`.
 
 ---
 
@@ -25,7 +20,7 @@ The cron schedule, alert thresholds, and delivery channel are configured in `AGE
 - Python 3.10+
 - A [NewsAPI](https://newsapi.org) key (free tier works, but news may be delayed by 24 hours)
 - An [OpenAI](https://platform.openai.com) API key (used for scoring relevance)
-- OpenClaw installed and configured with a Telegram bot (for automated delivery)
+- A [Telegram](https://core.telegram.org/bots) bot token and target chat ID (for alerts and optional digest script)
 
 ---
 
@@ -34,7 +29,7 @@ The cron schedule, alert thresholds, and delivery channel are configured in `AGE
 ```bash
 git clone <this-repo>
 cd news-intel
-python -m venv venv
+python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
@@ -60,15 +55,11 @@ TELEGRAM_CHAT_ID=your_telegram_chat_id_here
 YOUR_CONTEXT=your_context_here
 ```
 
-### 2. Telegram delivery
+Telegram credentials are required only if you want alert delivery (and for `send-daily-digest.sh`). If they are missing, the pipeline still runs; high-priority items are only written to disk.
 
-Open `config.yaml` and set your Telegram bot token and target chat ID:
+### 2. Telegram
 
-```yaml
-telegram:
-  bot_token: "YOUR_BOT_TOKEN"
-  chat_id: YOUR_CHAT_ID   # Use negative ID for groups, e.g. -5204706806
-```
+`config.yaml` lists `telegram.bot_token` and `telegram.chat_id` as placeholders; the running process reads **`TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` from the environment** (e.g. via `.env` loaded by `run.py`).
 
 To get your group's chat ID: add `@userinfobot` to your Telegram group, send any message, and it will reply with the group ID.
 
@@ -82,7 +73,7 @@ Edit `config.yaml` to add or remove keywords, RSS feeds, or adjust score thresho
 score_thresholds:
   minimum: 5        # Items below this are discarded
   tweet_suggestion: 7
-  alert: 8          # Items at or above this trigger immediate alerts
+  alert: 8          # Items at or above this trigger immediate alerts + Telegram (if configured)
 ```
 
 ---
@@ -100,6 +91,7 @@ The pipeline:
 3. Scores each new item with OpenAI (0–10 relevance score)
 4. Discards items below `score_thresholds.minimum`
 5. Writes dated archives and `latest-*` output files
+6. Sends Telegram notification when this run produced one or more alert-tier items and Telegram env vars are set
 
 ---
 
@@ -110,7 +102,7 @@ The pipeline:
 | `data/latest-digest.md` | Latest run window grouped by category, sorted by score |
 | `data/latest-digest-24h.md` | Rolling last 24 hours (for daily delivery) |
 | `data/latest-tweets.md` | Items scoring ≥ 7 with tweet-ready copy angles |
-| `data/latest-alerts.md` | Items scoring ≥ 8 — high priority |
+| `data/latest-alerts.md` | Items at or above the alert threshold — high priority |
 | `data/digests/YYYY-MM-DD-HHMMZ-digest.md` | Per-run digest archive |
 | `data/digests/YYYY-MM-DD-items.json` | Per-day scored item ledger |
 | `data/tweets/YYYY-MM-DD-tweets.md` | Dated tweet archive |
@@ -122,48 +114,21 @@ The pipeline:
 
 | Score | Meaning |
 |-------|---------|
-| 8–10 | Alert — direct threat or major opportunity; deliver immediately |
+| 8–10 | Alert — direct threat or major opportunity; Telegram when configured |
 | 7 | Tweet suggestion — strong market signal |
 | 4–6 | Digest only — useful context |
 | < 4 | Discarded |
 
 ---
 
-## Automated Scheduling with OpenClaw
+## Cron quick reference
 
-OpenClaw manages the run schedule via its built-in cron system. If you are running OpenClaw, add the following cron jobs via `openclaw cron add` or the OpenClaw Control UI:
-
-**6-hour pipeline run:**
-```json
-{
-  "name": "news-intel-6h-run",
-  "schedule": { "kind": "every", "everyMs": 21600000 },
-  "payload": {
-    "kind": "agentTurn",
-    "message": "Run the News Intel pipeline: activate venv, run python run.py in news-intel/, verify outputs, send alerts if any items score >= 8 to the configured Telegram group."
-  }
-}
-```
-
-**Daily 24h digest:**
-```json
-{
-  "name": "news-intel-daily-digest",
-  "schedule": { "kind": "cron", "expr": "0 7 * * *", "tz": "UTC" },
-  "payload": {
-    "kind": "agentTurn",
-    "message": "Send the News Intel daily digest (data/latest-digest-24h.md) to the configured Telegram group."
-  }
-}
-```
-
-**Without OpenClaw** — use a standard cron job:
 ```bash
-# Every 6 hours: fetch, score, write outputs
-0 */6 * * * cd /path/to/news-intel && source venv/bin/activate && python run.py >> data/run.log 2>&1
+# Every 8 hours at 06:00, 14:00, 22:00 local time (pipeline + Telegram alerts when applicable)
+0 6,14,22 * * * cd /path/to/news-intel && . venv/bin/activate && python run.py >> /path/to/news-intel/data/run.log 2>&1
 ```
 
-For Telegram delivery without OpenClaw, the pipeline writes `latest-alerts.md` and `latest-digest-24h.md` — you can wrap `run.py` in a shell script that reads those files and POSTs to the Telegram Bot API directly.
+For a full two-job example (pipeline + daily digest script), see `crontab.example`.
 
 ---
 

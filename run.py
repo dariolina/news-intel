@@ -17,6 +17,7 @@ from deduplicator import filter_new, load_seen, save_seen
 from fetcher import fetch_arxiv, fetch_iacr, fetch_newsapi, fetch_rss
 from formatter import format_alerts, format_daily_digest, format_tweet_suggestions
 from scorer import score_items
+from telegram_notify import send_plain_text
 
 logging.basicConfig(
     level=logging.INFO,
@@ -240,6 +241,21 @@ def main() -> None:
         alerts_path = os.path.join(alerts_dir, f"{date_str}-alerts.md")
         write_file(alerts_path, alerts_md)
     write_file(latest_alerts, alerts_md)
+
+    if alerts:
+        bot_token = (os.getenv("TELEGRAM_BOT_TOKEN") or "").strip()
+        chat_id = (os.getenv("TELEGRAM_CHAT_ID") or "").strip()
+        if bot_token and chat_id:
+            logger.info("Sending %d high-priority alert(s) to Telegram", len(alerts))
+            try:
+                send_plain_text(bot_token, chat_id, alerts_md)
+            except Exception:
+                logger.exception("Telegram alert delivery failed")
+        else:
+            logger.warning(
+                "High-priority alerts present but TELEGRAM_BOT_TOKEN / "
+                "TELEGRAM_CHAT_ID not set; skipping Telegram send"
+            )
 
     # ------------------------------------------------------------------
     # 7. Summary
